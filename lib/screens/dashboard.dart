@@ -335,16 +335,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final rowsToInsert = <Map<String, dynamic>>[];
       final skipped = <String>[];
 
+      // Lookup map yang case/whitespace-insensitive, dibangun sekali per import.
+      final kantorIdByNormalizedName = <String, int>{
+        for (final entry in _kantorIdByName.entries)
+          _normalize(entry.key): entry.value,
+      };
+      final jenisIdByNormalizedName = <String, int>{
+        for (final entry in _jenisIdByName.entries)
+          _normalize(entry.key): entry.value,
+      };
+
       for (final row in sheet.rows.skip(1)) {
         if (row.length < 5) continue;
-        final values =
-            row.map((cell) => cell?.value.toString().trim() ?? '').toList();
+        final values = row.map((cell) => _cellToString(cell?.value)).toList();
         if (values.take(5).any((value) => value.isEmpty)) continue;
 
         final tahun = int.tryParse(values[0]);
         final bulan = _parseBulan(values[1]);
-        final idKantor = _kantorIdByName[values[2]];
-        final idJenis = _jenisIdByName[values[3]];
+        final idKantor = kantorIdByNormalizedName[_normalize(values[2])];
+        final idJenis = jenisIdByNormalizedName[_normalize(values[3])];
         final nominal = double.tryParse(values[4].replaceAll(RegExp(r'[^0-9.]'), ''));
 
         if (tahun == null || bulan == null || idKantor == null ||
@@ -385,6 +394,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (mounted) setState(() => _isProcessing = false);
     }
   }
+
+  /// Mengubah CellValue dari package `excel` menjadi String polos.
+  /// `cell.value.toString()` TIDAK bisa dipakai langsung karena cell.value
+  /// adalah objek CellValue (TextCellValue/IntCellValue/DoubleCellValue/...),
+  /// bukan String/num mentah, sehingga toString() bisa menghasilkan
+  /// representasi yang tidak sesuai isi selnya.
+  String _cellToString(CellValue? value) {
+    if (value == null) return '';
+    return switch (value) {
+      TextCellValue v => v.value.toString().trim(),
+      IntCellValue v => v.value.toString(),
+      DoubleCellValue v => v.value.toString(),
+      BoolCellValue v => v.value.toString(),
+      DateCellValue v => '${v.year}-${v.month.toString().padLeft(2, '0')}-'
+          '${v.day.toString().padLeft(2, '0')}',
+      _ => value.toString().trim(),
+    };
+  }
+
+  /// Normalisasi nama Kantor/Jenis Pinjaman agar pencocokan tidak
+  /// bergantung pada huruf besar/kecil atau spasi berlebih.
+  String _normalize(String value) =>
+      value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 
   int? _parseBulan(String value) {
     final asNumber = int.tryParse(value);
