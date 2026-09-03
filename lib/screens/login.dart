@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/auth.dart';
 import '../theme/app.dart';
+import 'dashboard.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -64,7 +65,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
       _showToast('Selamat datang! Membuka dasbor...');
-
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const DashboardScreen()),
+      );
     } on AuthException catch (e) {
       _showToast(e.message, isError: true);
     } catch (e) {
@@ -293,11 +298,14 @@ class _LoginScreenState extends State<LoginScreen> {
             icon: Icons.lock_outline,
             suffixIcon: IconButton(
               icon: Icon(
-                _obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                _obscurePassword
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
                 size: 20,
                 color: AppColors.onSurfaceVariant,
               ),
-              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+              onPressed: () =>
+                  setState(() => _obscurePassword = !_obscurePassword),
             ),
           ),
           validator: (value) {
@@ -360,18 +368,22 @@ class _LoginScreenState extends State<LoginScreen> {
                 onChanged: (val) => setState(() => _rememberMe = val ?? false),
                 activeColor: AppColors.primary,
                 visualDensity: VisualDensity.compact,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
+                ),
               ),
               const Text(
                 'Ingat Saya',
-                style: TextStyle(fontSize: 12, color: AppColors.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.onSurfaceVariant,
+                ),
               ),
             ],
           ),
         ),
         TextButton(
           onPressed: () {
-            // TODO: arahkan ke halaman lupa password
           },
           child: const Text(
             'Lupa Password?',
@@ -395,18 +407,26 @@ class _LoginScreenState extends State<LoginScreen> {
           backgroundColor: AppColors.primary,
           foregroundColor: AppColors.onPrimary,
           elevation: 1,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
         child: _isLoading
             ? const SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
               )
             : const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text('Masuk ke Aplikasi', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  Text(
+                    'Masuk ke Aplikasi',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
                   SizedBox(width: 8),
                   Icon(Icons.arrow_forward, size: 18),
                 ],
@@ -423,7 +443,11 @@ class _LoginScreenState extends State<LoginScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: Text(
             'ATAU MASUK LEBIH CEPAT',
-            style: TextStyle(fontSize: 10, letterSpacing: 0.6, color: AppColors.outline),
+            style: TextStyle(
+              fontSize: 10,
+              letterSpacing: 0.6,
+              color: AppColors.outline,
+            ),
           ),
         ),
         Expanded(child: Divider(color: AppColors.surfaceContainer)),
@@ -449,14 +473,23 @@ class _LoginScreenState extends State<LoginScreen> {
         style: OutlinedButton.styleFrom(
           backgroundColor: AppColors.surfaceContainerLow,
           side: BorderSide.none,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon, size: 20, color: AppColors.secondary),
             const SizedBox(width: 8),
-            Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.onSurface)),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.onSurface,
+              ),
+            ),
           ],
         ),
       ),
