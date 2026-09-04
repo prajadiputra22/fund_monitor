@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../screens/dashboard.dart';
 import '../screens/kantor.dart';
+import '../screens/pinjaman.dart';
+import '../theme/app.dart';
 
 enum AppTab { dashboard, kantor, pinjaman, akun }
 
@@ -10,8 +12,9 @@ class AppNavBar extends StatelessWidget {
 
   final AppTab currentTab;
 
-  void _handleTap(BuildContext context, int index) {
-    final selected = AppTab.values[index];
+  static const double iconLabelGap = 2;
+
+  void _handleTap(BuildContext context, AppTab selected) {
     if (selected == currentTab) return;
 
     switch (selected) {
@@ -26,6 +29,10 @@ class AppNavBar extends StatelessWidget {
         );
         break;
       case AppTab.pinjaman:
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const PinjamanScreen()),
+        );
+        break;
       case AppTab.akun:
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
@@ -41,31 +48,81 @@ class AppNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return NavigationBar(
-      selectedIndex: currentTab.index,
-      onDestinationSelected: (index) => _handleTap(context, index),
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.dashboard_outlined),
-          selectedIcon: Icon(Icons.dashboard),
-          label: 'Dashboard',
+    return Container(
+      height: 60,
+      decoration: BoxDecoration(
+        color: AppColors.surfaceContainerLowest,
+        border: Border(
+          top: BorderSide(color: AppColors.outline.withValues(alpha: 0.15)),
         ),
-        NavigationDestination(
-          icon: Icon(Icons.apartment_outlined),
-          selectedIcon: Icon(Icons.apartment),
-          label: 'Kantor',
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            _navItem(
+              context,
+              tab: AppTab.dashboard,
+              outlinedIcon: Icons.dashboard_outlined,
+              filledIcon: Icons.dashboard,
+              label: 'Dashboard',
+            ),
+            _navItem(
+              context,
+              tab: AppTab.kantor,
+              outlinedIcon: Icons.apartment_outlined,
+              filledIcon: Icons.apartment,
+              label: 'Kantor',
+            ),
+            _navItem(
+              context,
+              tab: AppTab.pinjaman,
+              outlinedIcon: Icons.credit_score_outlined,
+              filledIcon: Icons.credit_score,
+              label: 'Pinjaman',
+            ),
+            _navItem(
+              context,
+              tab: AppTab.akun,
+              outlinedIcon: Icons.person_outline,
+              filledIcon: Icons.person,
+              label: 'Akun',
+            ),
+          ],
         ),
-        NavigationDestination(
-          icon: Icon(Icons.credit_score_outlined),
-          selectedIcon: Icon(Icons.credit_score),
-          label: 'Pinjaman',
+      ),
+    );
+  }
+
+  Widget _navItem(
+    BuildContext context, {
+    required AppTab tab,
+    required IconData outlinedIcon,
+    required IconData filledIcon,
+    required String label,
+  }) {
+    final selected = tab == currentTab;
+    final color = selected ? AppColors.primary : AppColors.onSurfaceVariant;
+
+    return Expanded(
+      child: InkWell(
+        onTap: () => _handleTap(context, tab),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(selected ? filledIcon : outlinedIcon, size: 22, color: color),
+            SizedBox(height: iconLabelGap),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                color: color,
+              ),
+            ),
+          ],
         ),
-        NavigationDestination(
-          icon: Icon(Icons.person_outline),
-          selectedIcon: Icon(Icons.person),
-          label: 'Akun',
-        ),
-      ],
+      ),
     );
   }
 }
