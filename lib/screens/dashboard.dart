@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:excel/excel.dart';
 import 'package:file_picker/file_picker.dart';
@@ -10,11 +11,31 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/auth.dart';
 import '../theme/app.dart';
+import '../widgets/navbar.dart';
 import 'login.dart';
 
 const List<String> _kNamaBulan = [
-  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+  'Januari',
+  'Februari',
+  'Maret',
+  'April',
+  'Mei',
+  'Juni',
+  'Juli',
+  'Agustus',
+  'September',
+  'Oktober',
+  'November',
+  'Desember',
+];
+
+const List<Color> _kJenisPalette = [
+  AppColors.primary,
+  AppColors.secondary,
+  Color(0xFFF2632F),
+  Color(0xFF7C93B8),
+  Color(0xFF9C6ADE),
+  Color(0xFFD9A441),
 ];
 
 class PendapatanEntry {
@@ -47,7 +68,8 @@ class PendapatanEntry {
     return PendapatanEntry(
       idPendapatan: (map['id_pendapatan'] as num).toInt(),
       idKantor: (map['id_kantor'] as num).toInt(),
-      namaKantor: (kantor?['nama_kantor'] as String?) ?? 'Kantor tidak diketahui',
+      namaKantor:
+          (kantor?['nama_kantor'] as String?) ?? 'Kantor tidak diketahui',
       idJenis: (map['id_jenis'] as num).toInt(),
       namaJenis: (jenis?['nama_jenis'] as String?) ?? 'Jenis tidak diketahui',
       tahun: (map['tahun'] as num).toInt(),
@@ -55,6 +77,24 @@ class PendapatanEntry {
       nominal: (map['nominal'] as num).toDouble(),
     );
   }
+}
+
+class _PeriodAgg {
+  final String key;
+  final String label;
+  final double total;
+  final Map<String, double> byJenis;
+  final String? topJenis;
+  final String? topKantor;
+
+  _PeriodAgg({
+    required this.key,
+    required this.label,
+    required this.total,
+    required this.byJenis,
+    required this.topJenis,
+    required this.topKantor,
+  });
 }
 
 class DashboardScreen extends StatefulWidget {
@@ -71,7 +111,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isProcessing = false;
   bool _isLoading = true;
   String? _errorMessage;
-  int _selectedPeriod = 6;
+
+  // null = tampilkan semua jenis pinjaman pada chart.
+  int? _jenisFilter = 3;
+  String? _selectedPeriodKey;
 
   List<PendapatanEntry> _loans = [];
   int _kantorCount = 0;
@@ -87,7 +130,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   double get _total => _loans.fold(0.0, (sum, row) => sum + row.nominal);
 
-  double get _rataRata => _loans.isEmpty ? 0 : _total / _loans.length;
+  // ---------------------------------------------------------------------
+  // Formatting helpers
+  // ---------------------------------------------------------------------
 
   String _formatNumber(double value) => value
       .toStringAsFixed(0)
@@ -96,14 +141,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
         (match) => '${match[1]}.',
       );
 
+  /// Format ringkas gaya Indonesia, contoh: "Rp 1,42 M" / "Rp 980 Jt".
   String _formatCompact(double value) {
     if (value >= 1000000000) {
-      return 'Rp ${(value / 1000000000).toStringAsFixed(2)} M';
+      final v = (value / 1000000000).toStringAsFixed(2).replaceAll('.', ',');
+      return 'Rp $v M';
     }
     if (value >= 1000000) {
-      return 'Rp ${(value / 1000000).toStringAsFixed(0)} Jt';
+      final v = (value / 1000000).toStringAsFixed(0);
+      return 'Rp $v Jt';
     }
     return 'Rp ${_formatNumber(value)}';
+  }
+
+  /// Memecah nilai besar menjadi (angka, satuan) untuk ditampilkan seperti
+  /// "4,82" + "Miliar" pada kartu ringkasan utama.
+  ({String value, String unit}) _splitCurrency(double value) {
+    if (value >= 1000000000) {
+      return (
+        value: (value / 1000000000).toStringAsFixed(2).replaceAll('.', ','),
+        unit: 'Miliar',
+      );
+    }
+    if (value >= 1000000) {
+      return (value: (value / 1000000).toStringAsFixed(0), unit: 'Juta');
+    }
+    return (value: _formatNumber(value), unit: '');
   }
 
   void _showMessage(String message, {bool error = false}) {
@@ -119,7 +182,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
   }
 
+  // ---------------------------------------------------------------------
   // Load Database
+  // ---------------------------------------------------------------------
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -162,6 +227,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _kantorCount = kantorRows.length;
         _kantorIdByName = kantorIdByName;
         _jenisIdByName = jenisIdByName;
+        _selectedPeriodKey = null;
         _isLoading = false;
       });
     } on PostgrestException catch (error) {
@@ -179,42 +245,112 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // CHART & RANKING
-  List<MapEntry<String, double>> get _trenPeriode {
-    final byPeriode = <String, double>{};
+  // ---------------------------------------------------------------------
+  // Aggregation: periode, jenis, kantor
+  // ---------------------------------------------------------------------
+
+  List<_PeriodAgg> get _periodAggregates {
     final order = <String>[];
+    final totalByPeriod = <String, double>{};
+    final jenisByPeriod = <String, Map<String, double>>{};
+    final kantorByPeriod = <String, Map<String, double>>{};
+
     for (final loan in _loans) {
       final key = '${loan.tahun}-${loan.bulan.toString().padLeft(2, '0')}';
-      if (!byPeriode.containsKey(key)) {
+      if (!totalByPeriod.containsKey(key)) {
         order.add(key);
-        byPeriode[key] = 0;
+        totalByPeriod[key] = 0;
+        jenisByPeriod[key] = {};
+        kantorByPeriod[key] = {};
       }
-      byPeriode[key] = byPeriode[key]! + loan.nominal;
+      totalByPeriod[key] = totalByPeriod[key]! + loan.nominal;
+      final jenisMap = jenisByPeriod[key]!;
+      jenisMap[loan.namaJenis] = (jenisMap[loan.namaJenis] ?? 0) + loan.nominal;
+      final kantorMap = kantorByPeriod[key]!;
+      kantorMap[loan.namaKantor] =
+          (kantorMap[loan.namaKantor] ?? 0) + loan.nominal;
     }
-    final entries = order.map((key) => MapEntry(key, byPeriode[key]!)).toList();
-    if (entries.length <= _selectedPeriod) return entries;
-    return entries.sublist(entries.length - _selectedPeriod);
+
+    return order.map((key) {
+      final bulan = int.parse(key.split('-')[1]);
+      final label = (bulan >= 1 && bulan <= 12)
+          ? _kNamaBulan[bulan - 1].substring(0, 3)
+          : key;
+
+      String? topOf(Map<String, double> map) {
+        if (map.isEmpty) return null;
+        return (map.entries.toList()
+              ..sort((a, b) => b.value.compareTo(a.value)))
+            .first
+            .key;
+      }
+
+      return _PeriodAgg(
+        key: key,
+        label: label,
+        total: totalByPeriod[key]!,
+        byJenis: jenisByPeriod[key]!,
+        topJenis: topOf(jenisByPeriod[key]!),
+        topKantor: topOf(kantorByPeriod[key]!),
+      );
+    }).toList();
   }
 
-  String _labelPeriode(String key) {
-    final parts = key.split('-');
-    final bulan = int.parse(parts[1]);
-    return (bulan >= 1 && bulan <= 12)
-        ? _kNamaBulan[bulan - 1].substring(0, 3)
-        : key;
+  /// Nama jenis pinjaman terurut dari volume total tertinggi -> terendah.
+  List<String> get _jenisRanking {
+    final totals = <String, double>{};
+    for (final loan in _loans) {
+      totals[loan.namaJenis] = (totals[loan.namaJenis] ?? 0) + loan.nominal;
+    }
+    final entries = totals.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return entries.map((e) => e.key).toList();
   }
 
   List<MapEntry<String, double>> get _rankingKantor {
     final byKantor = <String, double>{};
     for (final loan in _loans) {
-      byKantor[loan.namaKantor] = (byKantor[loan.namaKantor] ?? 0) + loan.nominal;
+      byKantor[loan.namaKantor] =
+          (byKantor[loan.namaKantor] ?? 0) + loan.nominal;
     }
     final entries = byKantor.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    return entries.take(5).toList();
+    return entries;
   }
 
+  int _jenisAktifUntukKantor(String namaKantor) {
+    final jenisSet = <String>{};
+    for (final loan in _loans) {
+      if (loan.namaKantor == namaKantor) jenisSet.add(loan.namaJenis);
+    }
+    return jenisSet.length;
+  }
+
+  /// Pertumbuhan bulan-ke-bulan (Month over Month) dari total nominal.
+  double? get _momGrowth {
+    final periods = _periodAggregates;
+    if (periods.length < 2) return null;
+    final last = periods.last.total;
+    final prev = periods[periods.length - 2].total;
+    if (prev == 0) return null;
+    return (last - prev) / prev * 100;
+  }
+
+  double get _rataRataBulanan {
+    final periods = _periodAggregates;
+    if (periods.isEmpty) return 0;
+    return _total / periods.length;
+  }
+
+  double get _persenKantorAktif {
+    if (_kantorCount == 0) return 0;
+    final aktif = _loans.map((e) => e.namaKantor).toSet().length;
+    return (aktif / _kantorCount) * 100;
+  }
+
+  // ---------------------------------------------------------------------
   // Export / Import
+  // ---------------------------------------------------------------------
   Future<void> _exportExcel() async {
     if (_loans.isEmpty) {
       _showMessage('Belum ada data untuk diekspor', error: true);
@@ -316,21 +452,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _importExcel() async {
-    final result = await FilePicker.pickFiles(
+    final selectedFile = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['xlsx', 'xls'],
     );
-    if (result.isEmpty) return;
-    final selectedFile = result.single;
+    if (selectedFile == null) return;
+
+    final Uint8List fileBytes;
+    try {
+      fileBytes = await selectedFile.readAsBytes();
+    } catch (_) {
+      _showMessage('Gagal membaca berkas yang dipilih', error: true);
+      return;
+    }
+
     setState(() {
       _selectedFileName = selectedFile.name;
       _isProcessing = true;
     });
     try {
-      final sheet = Excel.decodeBytes(await selectedFile.readAsBytes())
-          .tables
-          .values
-          .first;
+      final sheet = Excel.decodeBytes(fileBytes).tables.values.first;
 
       final rowsToInsert = <Map<String, dynamic>>[];
       final skipped = <String>[];
@@ -354,10 +495,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final bulan = _parseBulan(values[1]);
         final idKantor = kantorIdByNormalizedName[_normalize(values[2])];
         final idJenis = jenisIdByNormalizedName[_normalize(values[3])];
-        final nominal = double.tryParse(values[4].replaceAll(RegExp(r'[^0-9.]'), ''));
+        final nominal = double.tryParse(
+          values[4].replaceAll(RegExp(r'[^0-9.]'), ''),
+        );
 
-        if (tahun == null || bulan == null || idKantor == null ||
-            idJenis == null || nominal == null) {
+        if (tahun == null ||
+            bulan == null ||
+            idKantor == null ||
+            idJenis == null ||
+            nominal == null) {
           skipped.add(values.join(', '));
           continue;
         }
@@ -407,8 +553,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       IntCellValue v => v.value.toString(),
       DoubleCellValue v => v.value.toString(),
       BoolCellValue v => v.value.toString(),
-      DateCellValue v => '${v.year}-${v.month.toString().padLeft(2, '0')}-'
-          '${v.day.toString().padLeft(2, '0')}',
+      DateCellValue v =>
+        '${v.year}-${v.month.toString().padLeft(2, '0')}-'
+            '${v.day.toString().padLeft(2, '0')}',
       _ => value.toString().trim(),
     };
   }
@@ -438,41 +585,74 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('FundMonitor'),
-      actions: [
-        IconButton(
-          onPressed: _isLoading ? null : _loadData,
-          icon: const Icon(Icons.refresh),
-          tooltip: 'Muat ulang data',
-        ),
-        IconButton(
-          onPressed: _logout,
-          icon: const Icon(Icons.logout),
-          tooltip: 'Keluar',
-        ),
-      ],
-    ),
-    bottomNavigationBar: NavigationBar(
-      selectedIndex: 0,
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.dashboard_outlined),
-          selectedIcon: Icon(Icons.dashboard),
-          label: 'Dashboard',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.apartment_outlined),
-          label: 'Kantor',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.credit_score_outlined),
-          label: 'Pinjaman',
-        ),
-        NavigationDestination(icon: Icon(Icons.person_outline), label: 'Akun'),
-      ],
-    ),
+    backgroundColor: AppColors.background,
+    appBar: _buildAppBar(),
+    bottomNavigationBar: const AppNavBar(currentTab: AppTab.dashboard),
     body: SafeArea(child: _buildBody()),
+  );
+
+  PreferredSizeWidget _buildAppBar() => AppBar(
+    backgroundColor: AppColors.background.withOpacity(0.9),
+    elevation: 0,
+    scrolledUnderElevation: 1,
+    surfaceTintColor: Colors.transparent,
+    titleSpacing: 16,
+    title: Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: AppColors.primary,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          alignment: Alignment.center,
+          child: const Text(
+            'P',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        const Text(
+          'FundMonitor',
+          style: TextStyle(
+            color: AppColors.primary,
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+          ),
+        ),
+      ],
+    ),
+    actions: [
+      IconButton(
+        onPressed: _isLoading ? null : _loadData,
+        icon: const Icon(Icons.notifications_none_rounded),
+        color: AppColors.onSurfaceVariant,
+        tooltip: 'Muat ulang data',
+      ),
+      PopupMenuButton<String>(
+        tooltip: 'Akun',
+        offset: const Offset(0, 44),
+        onSelected: (value) {
+          if (value == 'logout') _logout();
+        },
+        itemBuilder: (context) => const [
+          PopupMenuItem(value: 'logout', child: Text('Keluar')),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.only(right: 16),
+          child: CircleAvatar(
+            radius: 16,
+            backgroundColor: AppColors.surfaceContainer,
+            child: Icon(Icons.person, color: AppColors.primary, size: 18),
+          ),
+        ),
+      ),
+    ],
   );
 
   Widget _buildBody() {
@@ -509,45 +689,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       onRefresh: _loadData,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'Ringkasan Eksekutif',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primary,
-              ),
-            ),
+            _overviewCards(),
             const SizedBox(height: 12),
-            _summaryCard(),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _statCard(
-                    Icons.apartment,
-                    'Jaringan Kantor',
-                    '$_kantorCount Unit Aktif',
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _statCard(
-                    Icons.account_balance_wallet,
-                    'Rata-rata Pinjaman',
-                    _formatCompact(_rataRata),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
             _chartCard(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             _actionCard(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             _rankingCard(),
           ],
         ),
@@ -555,257 +706,981 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _summaryCard() => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'TOTAL PINJAMAN AKTIF',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppColors.onSurfaceVariant,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Rp ${_formatNumber(_total)}',
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w800,
-              color: AppColors.primary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${_loans.length} transaksi tercatat',
-            style: const TextStyle(color: AppColors.onSurfaceVariant),
-          ),
-        ],
-      ),
-    ),
-  );
+  // Kartu Ringkasan Eksekutif 
+  Widget _overviewCards() {
+    final growth = _momGrowth;
+    final periods = _periodAggregates;
+    final currency = _splitCurrency(_total);
 
-  Widget _statCard(IconData icon, String title, String value) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: AppColors.secondary),
-          const SizedBox(height: 8),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 11,
-              color: AppColors.onSurfaceVariant,
-            ),
+    return Column(
+      children: [
+        // Card Total Pinjaman
+        _cardShell(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'TOTAL PINJAMAN AKTIF',
+                    style: TextStyle(
+                      fontSize: 10,
+                      letterSpacing: 0.6,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.onSurfaceVariant,
+                    ),
+                  ),
+                  if (growth != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF86F2E4),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            growth >= 0
+                                ? Icons.trending_up
+                                : Icons.trending_down,
+                            size: 13,
+                            color: const Color(0xFF006F66),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${growth >= 0 ? '+' : ''}${growth.toStringAsFixed(1).replaceAll('.', ',')}% MoM',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF006F66),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  const Text(
+                    'Rp',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    currency.value,
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.5,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  if (currency.unit.isNotEmpty) ...[
+                    const SizedBox(width: 4),
+                    Text(
+                      currency.unit,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Flexible(
+                    child: Text(
+                      periods.isEmpty
+                          ? 'Belum ada periode tercatat'
+                          : 'Periode Berjalan (${periods.first.label} - ${periods.last.label})',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${_loans.length} Transaksi',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.secondary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              color: AppColors.primary,
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
+        ),
 
-  Widget _chartCard() {
-    final tren = _trenPeriode;
-    final maxValue = tren.isEmpty
-        ? 1.0
-        : tren.map((e) => e.value).reduce((a, b) => a > b ? a : b);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Tren Penyaluran',
+            Expanded(
+              child: _miniStatCard(
+                icon: Icons.apartment,
+                iconColor: AppColors.secondary,
+                label: 'JARINGAN KANTOR',
+                value: '$_kantorCount',
+                unit: 'Unit Aktif',
+                footerDotColor: AppColors.secondary,
+                footerText:
+                    '${_persenKantorAktif.toStringAsFixed(0)}% Beroperasi',
+                footerColor: const Color(0xFF006F66),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _miniStatCard(
+                icon: Icons.analytics,
+                iconColor: const Color(0xFFF2632F),
+                label: 'RATA-RATA/BULAN',
+                value: _splitCurrency(_rataRataBulanan).value,
+                unit: _splitCurrency(_rataRataBulanan).unit.isEmpty
+                    ? ''
+                    : _splitCurrency(_rataRataBulanan).unit,
+                footerIcon: Icons.north_east,
+                footerText:
+                    periods.isNotEmpty && periods.last.total >= _rataRataBulanan
+                    ? 'Stabil meningkat'
+                    : 'Cenderung menurun',
+                footerColor: const Color(0xFF832600),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _miniStatCard({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required String value,
+    required String unit,
+    String? footerText,
+    Color? footerColor,
+    Color? footerDotColor,
+    IconData? footerIcon,
+  }) => _cardShell(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 18, color: iconColor),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 10,
+                  letterSpacing: 0.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                color: AppColors.primary,
+              ),
+            ),
+            if (unit.isNotEmpty) ...[
+              const SizedBox(width: 4),
+              Text(
+                unit,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 4),
+        if (footerText != null)
+          Row(
+            children: [
+              if (footerDotColor != null) ...[
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: footerDotColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 5),
+              ] else if (footerIcon != null) ...[
+                Icon(footerIcon, size: 13, color: footerColor),
+                const SizedBox(width: 3),
+              ],
+              Flexible(
+                child: Text(
+                  footerText,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: footerColor ?? AppColors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+      ],
+    ),
+  );
+
+  // Chart Card 
+  Widget _chartCard() {
+    final periods = _periodAggregates;
+    final jenisRanking = _jenisRanking;
+
+    final displayedJenis = _jenisFilter == null
+        ? jenisRanking
+        : jenisRanking.take(_jenisFilter!).toList();
+    final extraJenisCount = jenisRanking.length - displayedJenis.length;
+
+    double maxValue = 1;
+    for (final period in periods) {
+      for (final name in displayedJenis) {
+        final v = period.byJenis[name] ?? 0;
+        if (v > maxValue) maxValue = v;
+      }
+    }
+
+    final kantorRanking = _rankingKantor;
+    final topKantorChips = kantorRanking.take(4).toList();
+    final extraKantorCount = kantorRanking.length - topKantorChips.length;
+
+    final selected = periods.firstWhere(
+      (p) => p.key == _selectedPeriodKey,
+      orElse: () => periods.isNotEmpty
+          ? periods.last
+          : _PeriodAgg(
+              key: '',
+              label: '',
+              total: 0,
+              byJenis: const {},
+              topJenis: null,
+              topKantor: null,
+            ),
+    );
+    final lastYear = periods.isNotEmpty
+        ? int.parse(periods.last.key.split('-')[0])
+        : DateTime.now().year;
+
+    return _cardShell(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: _withGaps([
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Pinjaman per Bulan',
                   style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.bold,
                     color: AppColors.primary,
                   ),
                 ),
-                DropdownButton<int>(
-                  value: _selectedPeriod,
-                  items: const [3, 6, 12]
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text('$value Bulan'),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) =>
-                      setState(() => _selectedPeriod = value!),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceContainer,
+                  borderRadius: BorderRadius.circular(4),
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (tren.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(
-                  child: Text(
-                    'Belum ada data untuk periode ini',
-                    style: TextStyle(color: AppColors.onSurfaceVariant),
+                child: Text(
+                  'T.A. $lastYear',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.onSurfaceVariant,
                   ),
-                ),
-              )
-            else
-              SizedBox(
-                height: 150,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: tren.map((entry) {
-                    final height = (entry.value / maxValue * 110)
-                        .clamp(20, 110)
-                        .toDouble();
-                    return Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          Container(
-                            height: height,
-                            width: 22,
-                            decoration: const BoxDecoration(
-                              color: AppColors.secondary,
-                              borderRadius: BorderRadius.vertical(
-                                top: Radius.circular(5),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            _labelPeriode(entry.key),
-                            style: const TextStyle(fontSize: 10),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _actionCard() => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'Tindakan & Laporan Data',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.bold,
-              color: AppColors.primary,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _isProcessing ? null : _exportExcel,
-                  icon: const Icon(Icons.table_view),
-                  label: const Text('Export Excel'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _isProcessing ? null : _exportPdf,
-                  icon: const Icon(Icons.picture_as_pdf),
-                  label: const Text('Export PDF'),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _isProcessing ? null : _importExcel,
-            icon: const Icon(Icons.upload_file),
-            label: Text(_selectedFileName ?? 'Import data dari Excel'),
+          const Text(
+            'Perbandingan volume per jenis pinjaman & distribusi kantor',
+            style: TextStyle(fontSize: 12, color: AppColors.onSurfaceVariant),
           ),
-          if (_isProcessing)
-            const Padding(
-              padding: EdgeInsets.only(top: 12),
-              child: LinearProgressIndicator(),
+          
+          // Filter
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(10),
             ),
-        ],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Expanded(
+                  child: Text(
+                    'JUMLAH JENIS TERTINGGI:',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
+                      color: AppColors.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                DropdownButtonHideUnderline(
+                  child: DropdownButton<int?>(
+                    value: _jenisFilter,
+                    borderRadius: BorderRadius.circular(10),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 3,
+                        child: Text('3 Jenis Tertinggi'),
+                      ),
+                      DropdownMenuItem(
+                        value: 5,
+                        child: Text('5 Jenis Tertinggi'),
+                      ),
+                      DropdownMenuItem(value: null, child: Text('Semua Jenis')),
+                    ],
+                    onChanged: (value) => setState(() => _jenisFilter = value),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Chart area
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _formatCompact(maxValue),
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                    ),
+                    const Text(
+                      'Sentuh batang untuk rincian',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.secondary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                if (periods.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 32),
+                    child: Center(
+                      child: Text(
+                        'Belum ada data untuk ditampilkan',
+                        style: TextStyle(color: AppColors.onSurfaceVariant),
+                      ),
+                    ),
+                  )
+                else
+                  SizedBox(
+                    height: 170,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: periods.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 18),
+                      itemBuilder: (context, index) {
+                        final period = periods[index];
+                        return GestureDetector(
+                          onTap: () =>
+                              setState(() => _selectedPeriodKey = period.key),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  for (
+                                    var i = 0;
+                                    i < displayedJenis.length;
+                                    i++
+                                  ) ...[
+                                    if (i > 0) const SizedBox(width: 4),
+                                    _bar(
+                                      height:
+                                          ((period.byJenis[displayedJenis[i]] ??
+                                                      0) /
+                                                  maxValue *
+                                                  130)
+                                              .clamp(2, 130)
+                                              .toDouble(),
+                                      color:
+                                          _kJenisPalette[i %
+                                              _kJenisPalette.length],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                period.label,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: period.key == selected.key
+                                      ? FontWeight.w800
+                                      : FontWeight.w600,
+                                  color: AppColors.onSurface,
+                                ),
+                              ),
+                              Text(
+                                _formatCompact(period.total),
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: AppColors.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                if (periods.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.info_outline,
+                          size: 16,
+                          color: AppColors.secondary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            selected.key.isEmpty
+                                ? '-'
+                                : '${selected.label} : ${_formatCompact(selected.total)}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          [
+                            if (selected.topJenis != null) selected.topJenis,
+                            if (selected.topKantor != null) selected.topKantor,
+                          ].join(' - '),
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: AppColors.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (jenisRanking.isNotEmpty) ...[
+            const Text(
+              'JENIS PINJAMAN:',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.4,
+                color: AppColors.onSurfaceVariant,
+              ),
+            ),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (var i = 0; i < displayedJenis.length; i++)
+                  _legendChip(
+                    color: _kJenisPalette[i % _kJenisPalette.length],
+                    label: displayedJenis[i],
+                  ),
+                if (extraJenisCount > 0)
+                  _legendChip(
+                    color: AppColors.outline,
+                    label: '+$extraJenisCount Jenis Lain',
+                    muted: true,
+                  ),
+              ],
+            ),
+          ],
+
+          if (topKantorChips.isNotEmpty) ...[
+            const Text(
+              'KODE KANTOR UTAMA:',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.4,
+                color: AppColors.onSurfaceVariant,
+              ),
+            ),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final entry in topKantorChips) _plainChip(entry.key),
+                if (extraKantorCount > 0)
+                  _plainChip('+$extraKantorCount Lainnya', muted: true),
+              ],
+            ),
+          ],
+        ], 10),
+      ),
+    );
+  }
+
+  Widget _bar({required double height, required Color color}) => Container(
+    width: 16,
+    height: height,
+    decoration: BoxDecoration(
+      color: color,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+    ),
+  );
+
+  Widget _legendChip({
+    required Color color,
+    required String label,
+    bool muted = false,
+  }) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: AppColors.surfaceContainer,
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: muted ? AppColors.onSurfaceVariant : AppColors.onSurface,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _plainChip(String label, {bool muted = false}) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: muted
+          ? AppColors.surfaceContainerHigh
+          : AppColors.surfaceContainer,
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Text(
+      label,
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        color: muted ? AppColors.onSurfaceVariant : AppColors.onSurface,
       ),
     ),
   );
 
-  Widget _rankingCard() {
-    final ranking = _rankingKantor;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  // Kartu Aksi & Laporan
+  Widget _actionCard() => _cardShell(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: _withGaps([
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
-              'Ranking Penyaluran',
+              'Tindakan & Laporan Data',
               style: TextStyle(
-                fontSize: 17,
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
                 color: AppColors.primary,
               ),
             ),
-            const SizedBox(height: 8),
-            if (ranking.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  'Belum ada data pinjaman',
-                  style: TextStyle(color: AppColors.onSurfaceVariant),
+            IconButton(
+              onPressed: _isLoading ? null : _loadData,
+              icon: const Icon(
+                Icons.sync,
+                color: AppColors.secondary,
+                size: 20,
+              ),
+              tooltip: 'Muat ulang data',
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+        Row(
+          children: _withGaps(
+            [
+              Expanded(
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.secondary,
+                    minimumSize: const Size.fromHeight(44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: _isProcessing ? null : _exportExcel,
+                  icon: const Icon(Icons.table_view, size: 18),
+                  label: const Text('Export Excel'),
                 ),
-              )
-            else
-              ...ranking.asMap().entries.map(
-                (entry) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(
-                    backgroundColor: entry.key == 0
-                        ? AppColors.primary
-                        : AppColors.surfaceContainer,
-                    child: Text(
-                      '${entry.key + 1}',
-                      style: TextStyle(
-                        color:
-                            entry.key == 0 ? Colors.white : AppColors.primary,
+              ),
+              Expanded(
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFF2632F),
+                    minimumSize: const Size.fromHeight(44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: _isProcessing ? null : _exportPdf,
+                  icon: const Icon(Icons.picture_as_pdf, size: 18),
+                  label: const Text('Export PDF'),
+                ),
+              ),
+            ],
+            8,
+            vertical: false,
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: _withGaps([
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'SINKRONISASI BERKAS',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
+                      color: AppColors.onSurfaceVariant,
+                    ),
+                  ),
+                  Text(
+                    _selectedFileName == null
+                        ? 'No file chosen'
+                        : '1 berkas siap',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                      color: AppColors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: AppColors.surfaceContainerLowest,
+                        minimumSize: const Size.fromHeight(44),
+                        alignment: Alignment.centerLeft,
+                        side: BorderSide(
+                          color: AppColors.outline.withOpacity(0.3),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      onPressed: _isProcessing ? null : _importExcel,
+                      icon: const Icon(
+                        Icons.upload_file,
+                        size: 18,
+                        color: AppColors.primary,
+                      ),
+                      label: Text(
+                        _selectedFileName ?? 'Pilih file data (.xlsx, .xls)',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.onSurfaceVariant,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                   ),
-                  title: Text(entry.value.key),
-                  trailing: Text(
-                    _formatCompact(entry.value.value),
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                ],
+              ),
+              if (_isProcessing) const LinearProgressIndicator(),
+            ], 8),
+          ),
+        ),
+      ], 10),
+    ),
+  );
+
+  // Ranking Kantor
+  Widget _rankingCard() {
+    final ranking = _rankingKantor.take(5).toList();
+    final total = _total;
+
+    return _cardShell(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: _withGaps([
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'TOP KANTOR',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                      color: AppColors.secondary,
+                    ),
                   ),
+                  Text(
+                    'Ranking Penyaluran',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ],
+              ),
+              TextButton(
+                onPressed: null,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Lihat Semua (${_rankingKantor.length})',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.secondary,
+                      ),
+                    ),
+                    const Icon(
+                      Icons.chevron_right,
+                      size: 16,
+                      color: AppColors.secondary,
+                    ),
+                  ],
                 ),
               ),
-          ],
-        ),
+            ],
+          ),
+          if (ranking.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'Belum ada data pinjaman',
+                style: TextStyle(color: AppColors.onSurfaceVariant),
+              ),
+            )
+          else
+            Column(
+              children: _withGaps([
+                for (var i = 0; i < ranking.length; i++)
+                  _rankingRow(
+                    rank: i + 1,
+                    namaKantor: ranking[i].key,
+                    nominal: ranking[i].value,
+                    jenisCount: _jenisAktifUntukKantor(ranking[i].key),
+                    persen: total == 0 ? 0 : ranking[i].value / total * 100,
+                  ),
+              ], 8),
+            ),
+        ], 12),
       ),
     );
   }
+
+  Widget _rankingRow({
+    required int rank,
+    required String namaKantor,
+    required double nominal,
+    required int jenisCount,
+    required double persen,
+  }) => Container(
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: AppColors.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: rank == 1
+                ? AppColors.primary
+                : AppColors.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            '$rank',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: rank == 1 ? Colors.white : AppColors.onSurface,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                namaKantor,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary,
+                ),
+              ),
+              Text(
+                '$jenisCount Jenis Pinjaman Dominan',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              _formatCompact(nominal),
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+              ),
+            ),
+            Text(
+              '${persen.toStringAsFixed(1).replaceAll('.', ',')}% Porsi',
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.secondary,
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+
+  // Shell kartu umum
+  List<Widget> _withGaps(
+    List<Widget> children,
+    double gap, {
+    bool vertical = true,
+  }) {
+    if (children.isEmpty) return children;
+    final result = <Widget>[];
+    for (var i = 0; i < children.length; i++) {
+      if (i > 0) {
+        result.add(vertical ? SizedBox(height: gap) : SizedBox(width: gap));
+      }
+      result.add(children[i]);
+    }
+    return result;
+  }
+
+  Widget _cardShell({required Widget child}) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: AppColors.surfaceContainerLowest,
+      borderRadius: BorderRadius.circular(14),
+      boxShadow: [
+        BoxShadow(
+          color: AppColors.primary.withOpacity(0.04),
+          blurRadius: 8,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    ),
+    child: child,
+  );
 }

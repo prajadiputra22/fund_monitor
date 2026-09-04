@@ -7,7 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../theme/app.dart';
-import 'dashboard.dart';
+import '../widgets/navbar.dart';
 
 const List<Color> _kKomposisiColors = [
   AppColors.primary,
@@ -267,30 +267,7 @@ class _KantorScreenState extends State<KantorScreen> {
         ),
       ],
     ),
-    bottomNavigationBar: NavigationBar(
-      selectedIndex: 1,
-      onDestinationSelected: (index) {
-        if (index == 0) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const DashboardScreen()),
-          );
-        } else if (index != 1) {
-          _showMessage('Menu ini belum tersedia', error: true);
-        }
-      },
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.dashboard_outlined),
-          label: 'Dashboard',
-        ),
-        NavigationDestination(icon: Icon(Icons.apartment), label: 'Kantor'),
-        NavigationDestination(
-          icon: Icon(Icons.credit_score_outlined),
-          label: 'Pinjaman',
-        ),
-        NavigationDestination(icon: Icon(Icons.person_outline), label: 'Akun'),
-      ],
-    ),
+    bottomNavigationBar: const AppNavBar(currentTab: AppTab.kantor),
     body: SafeArea(child: _buildBody()),
   );
 
@@ -1083,23 +1060,12 @@ class _KantorDetailSheet extends StatelessWidget {
                 );
               }),
             const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Tutup'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.analytics, size: 18),
-                    label: const Text('Buka Laporan'),
-                  ),
-                ),
-              ],
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Tutup'),
+              ),
             ),
           ],
         ),
