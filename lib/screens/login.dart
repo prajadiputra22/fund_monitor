@@ -79,28 +79,30 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _handleBiometricPlaceholder(String type) {
-    _showToast('Fitur $type belum tersedia', isError: true);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(
-            children: [
-              const SizedBox(height: 24),
-              _buildHeader(),
-              const SizedBox(height: 24),
-              _buildFormCard(),
-              const SizedBox(height: 32),
-              _buildFooter(),
-              const SizedBox(height: 16),
-            ],
-          ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 20),
+                      _buildFormCard(),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -109,35 +111,20 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildHeader() {
     return Column(
       children: [
-        Container(
-          width: 80,
-          height: 80,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppColors.surfaceContainerLowest,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Image.asset(
-              'assets/image/logo.png',
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) => const Icon(
-                Icons.account_balance,
-                color: AppColors.primary,
-                size: 36,
-              ),
+        SizedBox(
+          width: 70,
+          height: 70,
+          child: Image.asset(
+            'assets/image/logo.png',
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) => const Icon(
+              Icons.account_balance,
+              color: AppColors.primary,
+              size: 40,
             ),
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
         const Text(
           'FundMonitor',
           style: TextStyle(
@@ -145,16 +132,6 @@ class _LoginScreenState extends State<LoginScreen> {
             fontWeight: FontWeight.bold,
             color: AppColors.primary,
             letterSpacing: -0.3,
-          ),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Sistem Monitoring Pinjaman & Keuangan Kantor',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 12,
-            color: AppColors.onSurfaceVariant,
-            height: 1.3,
           ),
         ),
       ],
@@ -181,8 +158,6 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildSecurityBadge(),
-            const SizedBox(height: 20),
             _buildUsernameField(),
             const SizedBox(height: 16),
             _buildPasswordField(),
@@ -190,37 +165,8 @@ class _LoginScreenState extends State<LoginScreen> {
             _buildUtilityRow(),
             const SizedBox(height: 8),
             _buildSubmitButton(),
-            const SizedBox(height: 20),
-            _buildDivider(),
-            const SizedBox(height: 16),
-            _buildBiometricRow(),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildSecurityBadge() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.verified_user, size: 18, color: AppColors.secondary),
-          const SizedBox(width: 10),
-          Text(
-            'AKSES PORTAL TERENKRIPSI 256-BIT',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
-              color: AppColors.onSurfaceVariant,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -233,7 +179,7 @@ class _LoginScreenState extends State<LoginScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: const [
             Text(
-              'Username / NIP',
+              'Username',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -252,7 +198,7 @@ class _LoginScreenState extends State<LoginScreen> {
           keyboardType: TextInputType.text,
           textInputAction: TextInputAction.next,
           decoration: _inputDecoration(
-            hint: 'Masukkan NIP, username, atau email',
+            hint: 'Masukkan username atau email',
             icon: Icons.badge_outlined,
           ),
           validator: (value) {
@@ -432,90 +378,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ],
               ),
       ),
-    );
-  }
-
-  Widget _buildDivider() {
-    return Row(
-      children: [
-        Expanded(child: Divider(color: AppColors.surfaceContainer)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: Text(
-            'ATAU MASUK LEBIH CEPAT',
-            style: TextStyle(
-              fontSize: 10,
-              letterSpacing: 0.6,
-              color: AppColors.outline,
-            ),
-          ),
-        ),
-        Expanded(child: Divider(color: AppColors.surfaceContainer)),
-      ],
-    );
-  }
-
-  Widget _buildBiometricRow() {
-    return Row(
-      children: [
-        Expanded(child: _biometricButton('Fingerprint', Icons.fingerprint)),
-        const SizedBox(width: 12),
-        Expanded(child: _biometricButton('Face ID', Icons.face_outlined)),
-      ],
-    );
-  }
-
-  Widget _biometricButton(String label, IconData icon) {
-    return SizedBox(
-      height: 44,
-      child: OutlinedButton(
-        onPressed: () => _handleBiometricPlaceholder(label),
-        style: OutlinedButton.styleFrom(
-          backgroundColor: AppColors.surfaceContainerLow,
-          side: BorderSide.none,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 20, color: AppColors.secondary),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppColors.onSurface,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFooter() {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.lock_clock, size: 14, color: AppColors.outline),
-            const SizedBox(width: 6),
-            Text(
-              'Sesi login aktif maksimal 24 jam',
-              style: TextStyle(fontSize: 10, color: AppColors.outline),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          'FundMonitor v1.0.0 • Divisi Keuangan & Analisis Risiko',
-          style: TextStyle(fontSize: 12, color: AppColors.outline),
-        ),
-      ],
     );
   }
 }

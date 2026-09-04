@@ -29,13 +29,15 @@ const List<String> _kNamaBulan = [
   'Desember',
 ];
 
+/// Palet warna untuk membedakan tiap "Jenis Pinjaman" pada chart & legend.
+/// Urutan mengikuti urutan jenis dengan volume tertinggi -> terendah.
 const List<Color> _kJenisPalette = [
-  AppColors.primary,
-  AppColors.secondary,
-  Color(0xFFF2632F),
-  Color(0xFF7C93B8),
-  Color(0xFF9C6ADE),
-  Color(0xFFD9A441),
+  AppColors.primary, // Jenis dengan volume #1 (Utama)
+  AppColors.secondary, // #2
+  Color(0xFFF2632F), // #3 (oranye, senada "on-tertiary-container" di desain)
+  Color(0xFF7C93B8), // #4
+  Color(0xFF9C6ADE), // #5
+  Color(0xFFD9A441), // #6 dst.
 ];
 
 class PendapatanEntry {
@@ -79,9 +81,10 @@ class PendapatanEntry {
   }
 }
 
+/// Agregat data per periode (tahun-bulan), dipakai untuk chart & info box.
 class _PeriodAgg {
-  final String key;
-  final String label;
+  final String key; // format 'YYYY-MM'
+  final String label; // contoh 'Jan'
   final double total;
   final Map<String, double> byJenis;
   final String? topJenis;
@@ -196,7 +199,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             .from('pendapatan')
             .select(
               'id_pendapatan, id_kantor, id_jenis, tahun, bulan, nominal, '
-              'kantor(nama_kantor, wilayah), jenis_pinjaman(nama_jenis, kategori)',
+              'kantor(nama_kantor, wilayah), jenis_pinjaman(nama_jenis)',
             )
             .order('tahun', ascending: true)
             .order('bulan', ascending: true),
@@ -583,6 +586,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  // ---------------------------------------------------------------------
+  // UI
+  // ---------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: AppColors.background,
@@ -706,7 +713,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // Kartu Ringkasan Eksekutif 
+  // --- Kartu Ringkasan Eksekutif -----------------------------------------
+
   Widget _overviewCards() {
     final growth = _momGrowth;
     final periods = _periodAggregates;
@@ -714,7 +722,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Column(
       children: [
-        // Card Total Pinjaman
+        // Card 1: Total Pinjaman (full width)
         _cardShell(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -829,43 +837,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
         ),
-
+        // Card 2 & 3
         const SizedBox(height: 8),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: _miniStatCard(
-                icon: Icons.apartment,
-                iconColor: AppColors.secondary,
-                label: 'JARINGAN KANTOR',
-                value: '$_kantorCount',
-                unit: 'Unit Aktif',
-                footerDotColor: AppColors.secondary,
-                footerText:
-                    '${_persenKantorAktif.toStringAsFixed(0)}% Beroperasi',
-                footerColor: const Color(0xFF006F66),
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: _miniStatCard(
+                  icon: Icons.apartment,
+                  iconColor: AppColors.secondary,
+                  label: 'JARINGAN KANTOR',
+                  value: '$_kantorCount',
+                  unit: 'Unit Aktif',
+                  footerDotColor: AppColors.secondary,
+                  footerText:
+                      '${_persenKantorAktif.toStringAsFixed(0)}% Beroperasi',
+                  footerColor: const Color(0xFF006F66),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _miniStatCard(
-                icon: Icons.analytics,
-                iconColor: const Color(0xFFF2632F),
-                label: 'RATA-RATA/BULAN',
-                value: _splitCurrency(_rataRataBulanan).value,
-                unit: _splitCurrency(_rataRataBulanan).unit.isEmpty
-                    ? ''
-                    : _splitCurrency(_rataRataBulanan).unit,
-                footerIcon: Icons.north_east,
-                footerText:
-                    periods.isNotEmpty && periods.last.total >= _rataRataBulanan
-                    ? 'Stabil meningkat'
-                    : 'Cenderung menurun',
-                footerColor: const Color(0xFF832600),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _miniStatCard(
+                  icon: Icons.analytics,
+                  iconColor: const Color(0xFFF2632F),
+                  label: 'RATA-RATA/BULAN',
+                  value: _splitCurrency(_rataRataBulanan).value,
+                  unit: _splitCurrency(_rataRataBulanan).unit.isEmpty
+                      ? ''
+                      : _splitCurrency(_rataRataBulanan).unit,
+                  footerIcon: Icons.north_east,
+                  footerText:
+                      periods.isNotEmpty &&
+                          periods.last.total >= _rataRataBulanan
+                      ? 'Stabil meningkat'
+                      : 'Cenderung menurun',
+                  footerColor: const Color(0xFF832600),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -962,7 +973,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ),
   );
 
-  // Chart Card 
+  // --- Chart Card ----------------------------------------------------------
+
   Widget _chartCard() {
     final periods = _periodAggregates;
     final jenisRanking = _jenisRanking;
@@ -1038,8 +1050,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             'Perbandingan volume per jenis pinjaman & distribusi kantor',
             style: TextStyle(fontSize: 12, color: AppColors.onSurfaceVariant),
           ),
-          
-          // Filter
+          // Filter jenis tertinggi
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
@@ -1238,6 +1249,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
           ),
+          // Legend jenis pinjaman
           if (jenisRanking.isNotEmpty) ...[
             const Text(
               'JENIS PINJAMAN:',
@@ -1266,7 +1278,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
           ],
-
+          // Legend kode kantor
           if (topKantorChips.isNotEmpty) ...[
             const Text(
               'KODE KANTOR UTAMA:',
@@ -1350,7 +1362,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ),
   );
 
-  // Kartu Aksi & Laporan
+  // --- Kartu Aksi & Laporan --------------------------------------------
+
   Widget _actionCard() => _cardShell(
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1488,7 +1501,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ),
   );
 
-  // Ranking Kantor
+  // --- Ranking Kantor ------------------------------------------------------
+
   Widget _rankingCard() {
     final ranking = _rankingKantor.take(5).toList();
     final total = _total;
@@ -1650,7 +1664,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ),
   );
 
-  // Shell kartu umum
+  // --- Shell kartu umum ------------------------------------------------
+
+  /// Menyisipkan `SizedBox` di antara setiap widget pada [children], sebagai
+  /// pengganti parameter `spacing` pada Row/Column (parameter itu baru ada
+  /// di Flutter versi baru, jadi cara ini lebih aman untuk semua versi).
   List<Widget> _withGaps(
     List<Widget> children,
     double gap, {

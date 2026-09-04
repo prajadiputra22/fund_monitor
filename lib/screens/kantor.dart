@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:excel/excel.dart';
 import 'package:flutter/material.dart';
@@ -257,18 +258,80 @@ class _KantorScreenState extends State<KantorScreen> {
   // UI
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('Kantor Cabang'),
-      actions: [
-        IconButton(
-          onPressed: _isLoading ? null : _loadData,
-          icon: const Icon(Icons.refresh),
-          tooltip: 'Muat ulang',
-        ),
-      ],
-    ),
+    appBar: _buildTopBar(),
     bottomNavigationBar: const AppNavBar(currentTab: AppTab.kantor),
-    body: SafeArea(child: _buildBody()),
+    body: SafeArea(top: false, child: _buildBody()),
+  );
+
+  PreferredSizeWidget _buildTopBar() => PreferredSize(
+    preferredSize: const Size.fromHeight(64),
+    child: ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          color: AppColors.background.withValues(alpha: 0.85),
+          child: SafeArea(
+            bottom: false,
+            child: SizedBox(
+              height: 64,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.account_balance,
+                        size: 18,
+                        color: AppColors.onPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'FundMonitor',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: AppColors.primary,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: _isLoading ? null : _loadData,
+                      icon: const Icon(Icons.notifications_outlined),
+                      color: AppColors.onSurfaceVariant,
+                      tooltip: 'Muat ulang',
+                    ),
+                    const SizedBox(width: 4),
+                    Container(
+                      width: 32,
+                      height: 32,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                        color: AppColors.surfaceContainerHigh,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.person,
+                        size: 18,
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 
   Widget _buildBody() {
@@ -320,16 +383,35 @@ class _KantorScreenState extends State<KantorScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  filtered.isEmpty
-                      ? 'Tidak Ada Hasil'
-                      : 'Daftar Kantor Cabang (${filtered.length} Ditampilkan)',
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.onSurfaceVariant,
-                    letterSpacing: 0.5,
+                Expanded(
+                  child: Text(
+                    filtered.isEmpty
+                        ? 'Tidak Ada Hasil'
+                        : 'Daftar Kantor Cabang (${filtered.length} Ditampilkan)',
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.onSurfaceVariant,
+                      letterSpacing: 0.5,
+                    ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.verified, size: 14, color: AppColors.secondary),
+                    SizedBox(width: 3),
+                    Text(
+                      'Data Terkini',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.secondary,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -351,74 +433,120 @@ class _KantorScreenState extends State<KantorScreen> {
     );
   }
 
-  Widget _headerSection() => Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-    children: [
-      const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _headerSection() {
+    final aktif = _allKantor.where((k) => k.punyaTransaksi).length;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'PORTOFOLIO JARINGAN',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.6,
+                color: AppColors.onSurfaceVariant,
+              ),
+            ),
+            SizedBox(height: 2),
+            Text(
+              'Kantor Cabang',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+              ),
+            ),
+          ],
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _PulsingDot(color: AppColors.secondary),
+              const SizedBox(width: 6),
+              Text(
+                '$aktif Operasional',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.onSurface,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statsRow() {
+    final total = _allKantor.length;
+    final aktif = _allKantor.where((k) => k.punyaTransaksi).length;
+    final persen = total == 0 ? 0 : ((aktif / total) * 100).round();
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'PORTOFOLIO JARINGAN',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.6,
-              color: AppColors.onSurfaceVariant,
+          Expanded(
+            child: _statTile(
+              icon: Icons.domain_verification,
+              label: 'CABANG AKTIF',
+              value: '$aktif',
+              iconColor: AppColors.secondary,
+              decorativeCircleColor: AppColors.secondary.withValues(
+                alpha: 0.12,
+              ),
+              captionWidget: Row(
+                children: [
+                  const Icon(
+                    Icons.check_circle,
+                    size: 14,
+                    color: AppColors.secondary,
+                  ),
+                  const SizedBox(width: 3),
+                  Text(
+                    '$persen% Sesuai Target',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.secondary,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          SizedBox(height: 2),
-          Text(
-            'Kantor Cabang',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: AppColors.primary,
+          const SizedBox(width: 8),
+          Expanded(
+            child: _statTile(
+              icon: Icons.map,
+              label: 'WILAYAH KERJA',
+              value: '${_wilayahList.length}',
+              iconColor: AppColors.primary,
+              decorativeCircleColor: AppColors.surfaceContainerHigh
+                  .withValues(alpha: 0.6),
+              captionWidget: Text(
+                _wilayahList.isEmpty ? '-' : _wilayahList.join(' & '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.onSurfaceVariant,
+                ),
+              ),
             ),
           ),
         ],
       ),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: AppColors.surfaceContainer,
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Text(
-          '${_allKantor.length} Kantor',
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppColors.onSurface,
-          ),
-        ),
-      ),
-    ],
-  );
-
-  Widget _statsRow() {
-    final aktif = _allKantor.where((k) => k.punyaTransaksi).length;
-    return Row(
-      children: [
-        Expanded(
-          child: _statTile(
-            icon: Icons.domain_verification,
-            label: 'CABANG AKTIF',
-            value: '$aktif',
-            caption: '${_allKantor.length} total kantor terdaftar',
-            iconColor: AppColors.secondary,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _statTile(
-            icon: Icons.map,
-            label: 'WILAYAH KERJA',
-            value: '${_wilayahList.length}',
-            caption: _wilayahList.isEmpty ? '-' : _wilayahList.join(', '),
-            iconColor: AppColors.primary,
-          ),
-        ),
-      ],
     );
   }
 
@@ -426,49 +554,67 @@ class _KantorScreenState extends State<KantorScreen> {
     required IconData icon,
     required String label,
     required String value,
-    required String caption,
     required Color iconColor,
+    required Color decorativeCircleColor,
+    required Widget captionWidget,
   }) => Container(
     padding: const EdgeInsets.all(12),
+    clipBehavior: Clip.antiAlias,
     decoration: BoxDecoration(
       color: AppColors.surfaceContainerLow,
       borderRadius: BorderRadius.circular(12),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.03),
+          blurRadius: 6,
+          offset: const Offset(0, 1),
+        ),
+      ],
     ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    child: Stack(
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Positioned(
+          right: -12,
+          bottom: -12,
+          child: Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: decorativeCircleColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.onSurfaceVariant,
+                  ),
+                ),
+                Icon(icon, size: 20, color: iconColor),
+              ],
+            ),
+            const SizedBox(height: 6),
             Text(
-              label,
+              value,
               style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: AppColors.onSurfaceVariant,
+                fontSize: 26,
+                fontWeight: FontWeight.w800,
+                color: AppColors.primary,
+                height: 1,
               ),
             ),
-            Icon(icon, size: 20, color: iconColor),
+            const SizedBox(height: 4),
+            captionWidget,
           ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.w800,
-            color: AppColors.primary,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          caption,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 10,
-            color: AppColors.onSurfaceVariant,
-          ),
         ),
       ],
     ),
@@ -546,16 +692,34 @@ class _KantorScreenState extends State<KantorScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? AppColors.primary : AppColors.surfaceContainer,
+          color: selected ? AppColors.primary : AppColors.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(999),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            color: selected ? AppColors.onPrimary : AppColors.onSurfaceVariant,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (selected) ...[
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF89F5E7),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected
+                    ? AppColors.onPrimary
+                    : AppColors.onSurfaceVariant,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -673,27 +837,46 @@ class _KantorScreenState extends State<KantorScreen> {
                             ),
                           ),
                           const SizedBox(width: 6),
-                          if (kantor.punyaTransaksi)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.secondary.withValues(
-                                  alpha: 0.15,
-                                ),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: const Text(
-                                'Ada Transaksi',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.secondary,
-                                ),
-                              ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
                             ),
+                            decoration: BoxDecoration(
+                              color: kantor.punyaTransaksi
+                                  ? AppColors.secondary.withValues(alpha: 0.15)
+                                  : AppColors.surfaceContainer,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: kantor.punyaTransaksi
+                                        ? AppColors.secondary
+                                        : AppColors.outline,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  kantor.punyaTransaksi
+                                      ? 'Aktif'
+                                      : 'Nonaktif',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    color: kantor.punyaTransaksi
+                                        ? AppColors.secondary
+                                        : AppColors.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 2),
@@ -814,11 +997,11 @@ class _KantorScreenState extends State<KantorScreen> {
           ),
         ),
         const SizedBox(width: 10),
-        const Expanded(
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
+              const Text(
                 'Rekapitulasi Portofolio',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
@@ -826,8 +1009,8 @@ class _KantorScreenState extends State<KantorScreen> {
                 ),
               ),
               Text(
-                'Unduh ringkasan seluruh kantor',
-                style: TextStyle(
+                'Unduh ringkasan data ${_allKantor.length} kantor',
+                style: const TextStyle(
                   fontSize: 12,
                   color: AppColors.onSurfaceVariant,
                 ),
@@ -851,6 +1034,43 @@ class _KantorScreenState extends State<KantorScreen> {
       ],
     ),
   );
+}
+
+class _PulsingDot extends StatefulWidget {
+  final Color color;
+  const _PulsingDot({required this.color});
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(
+        begin: 1,
+        end: 0.35,
+      ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
+      child: Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+      ),
+    );
+  }
 }
 
 class _KantorDetailSheet extends StatelessWidget {
